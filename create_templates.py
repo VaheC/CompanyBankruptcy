@@ -4,7 +4,7 @@ from pathlib import Path
 project_name = 'company_bankruptcy'
 
 list_of_files = [
-    ".github/workflows/.gitkeep"
+    ".github/workflows/.gitkeep",
     f"{project_name}/__init__.py",
     f"{project_name}/components/__init__.py",
     f"{project_name}/components/data_ingestion.py",
