@@ -4,13 +4,14 @@ import json
 
 from company_bankruptcy.exception.exception import CustomException
 from company_bankruptcy.logger.logger import logging
+from company_bankruptcy.constants.constants import DATABASE_NAME, COLLECTION_NAME, MONGODB_COLLECTION_STR
 
 import sys
 
 
 class MongoOps:
 
-    def __init__(self, client_url:str, database_name:str, collection_name:str=None):
+    def __init__(self, client_url:str, database_name:str=None, collection_name:str=None):
         self.client_url = client_url
         self.database_name = database_name
         self.collection_name = collection_name
@@ -93,3 +94,11 @@ class MongoOps:
             logging.info('Loading the data from the database failed')
             raise CustomException(e, sys)
         return retrieved_data
+    
+if __name__ == '__main__':
+
+    mongo_instance = MongoOps(
+        client_url=MONGODB_COLLECTION_STR
+    )
+
+    retrieved_data = mongo_instance.get_records(coll_name=COLLECTION_NAME, db_name=DATABASE_NAME)
