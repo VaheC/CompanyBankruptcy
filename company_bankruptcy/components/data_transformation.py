@@ -51,6 +51,7 @@ class DataTransformation:
             for feat in numerical_features:
                 train_df[f"feat{numerical_features.index(feat)}"] = train_df[feat] * train_df[' Liability-Assets Flag']
                 test_df[f"feat{numerical_features.index(feat)}"] = test_df[feat] * test_df[' Liability-Assets Flag']
+                numerical_features.append(f"feat{numerical_features.index(feat)}")
             logging.info('New columns created')
 
             logging.info('Starting feature selection')
@@ -69,16 +70,16 @@ class DataTransformation:
             )
             logging.info('Dictionary saved')
 
-            return (train_df, test_df)
+            return (train_df, test_df, skfold_list, numerical_features)
 
         except Exception as e:
             logging.info('Error occured during data transformation')
             raise CustomException(e, sys)
 
 if __name__ == '__main__':
-    
+
     data_transformation_obj = DataTransformation()
-    train_df, test_df = data_transformation_obj.initiate_data_transformation(
+    train_df, test_df, cv_fold_list, numerical_features = data_transformation_obj.initiate_data_transformation(
         train_path='artifacts\\train_data.csv', 
         test_path='artifacts\\test_data.csv'
     )
