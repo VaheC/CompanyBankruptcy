@@ -575,5 +575,23 @@ def get_mean_ensemble_prediction(prob_list):
     prob_array = np.vstack(prob_list).T
     return np.mean(prob_array, axis=1)
 
+class OptimizeAUC:
+    def __init__(self):
+        self.coef_ = 0
 
+    def _auc(self, coef, X, y):
+        X_coef = X * coef
+        preds = np.sum(X_coef, axis=1)
+        auc_score = roc_auc_score(y, preds)
+        return -1 * auc_score
+    
+    def fit(self, X, y):
+        loss_partial = partial(self._auc, X=X, y=y)
+        initial_coef = np.random.dirichlet(np.ones(X.shape[1]), size=1)
+        self.coef_ = fmin(loss_partial, initial_coef, disp=True)
+
+    def predict(self, X):
+        X_coef = X * self.coef_
+        preds = np.sum(X_coef, axis=1)
+        return preds
     
