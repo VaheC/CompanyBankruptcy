@@ -16,6 +16,9 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, f1_score, roc_auc_score
 from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import GridSearchCV
+from sklearn.pipeline import Pipeline
+from sklearn.compose import ColumnTransformer
 
 from xgboost import XGBClassifier
 
@@ -595,3 +598,128 @@ class OptimizeAUC:
         preds = np.sum(X_coef, axis=1)
         return preds
     
+def find_optimal_model(train_df, test_df, features_dict_path, cv_fold_list, numerical_features):
+
+    logging.info('Loading selected features dictionary')
+    selected_features_dict = load_object(file_path=features_dict_path)
+    logging.info('Selected features dictionary loaded')
+
+    models_list = [RandomForestClassifier(), XGBClassifier(), LogisticRegression(), SVC(probability=True)]
+    model_names_list = ['RandomForestClassifier', 'XGBClassifier', 'LogisticRegression', 'SVC']
+    model_params_list = [
+        {
+            'n_estimators': [5, 10, 15, 25, 50, 100, 120, 300, 500],
+            'max_depth': [2, 3, 5, 8, 15, 25, 30, None]
+        },
+        {
+            'eta': [0.01, 0.015, 0.025, 0.05, 0.1, 0.3, 0.4, 0.5, 0.6, 0.7, 0.9],
+            'max_depth': [3, 5, 6, 7, 9, 12, 15, 17, 25],
+            'n_estimators': [50, 100, 150, 200, 500, 1000]
+        },
+        {'model__penalty': ['l1','l2'], 'model__C': [0.001,0.01,0.1,1,10,100,1000]},
+        {'model__C': [1,10,100,1000], 'model__gamma': [1,0.1,0.001,0.0001], 'model__kernel': ['linear','rbf']}
+    ]
+
+    trained_models_dict = {}
+
+    best_score = 0
+    best_model_name = None
+
+    X_train = train_df[selected_shap_features]
+    y_train = train_df['Bankrupt?'].to_frame()
+
+    X_test = test_df[selected_shap_features]
+    y_test = test_df['Bankrupt?'].to_frame()
+
+    y_train_pred_prob_list = []
+    y_test_pred_prob_list = []
+    rank_ensemble_list = []
+
+    for model_idx in tqdm(range(len(model_names_list))):
+
+        model_name = model_names_list[model_idx]
+
+        selected_shap_features = selected_features_dict[model_name][1]['selected_shap_feats']
+
+        logging.info(f'Starting {model_name} training')
+        params_dict = model_params_list[model_idx]
+
+        model = models_list[model_idx]
+
+        if isinstance(model, LogisticRegression) or isinstance(model, SVC):
+            num_feat = [col for col in selected_shap_features if col in numerical_features]
+            num_trans = Pipeline([('scale', StandardScaler())])
+            preprocessor = ColumnTransformer(transformers = [('num', num_trans, num_feat)], remainder='passthrough')
+            pipe = Pipeline(
+                [
+                    ('preproc', preprocessor),
+                    ('model', model)
+                ]
+            )
+
+            model_gscv = GridSearchCV(
+                pipe,
+                param_grid=params_dict,
+                scoring='roc_auc',
+                cv=cv_fold_list,
+                n_jobs=-1,
+                verbose=4
+            )
+        else:
+            model_gscv = GridSearchCV(
+                model,
+                param_grid=params_dict,
+                scoring='roc_auc',
+                cv=cv_fold_list,
+                n_jobs=-1,
+                verbose=4
+            )
+
+        model_gscv.fit(X_train, y_train)
+        logging.info(f'{model_name} training finished')
+
+        trained_models_dict[model_name] = {}
+        trained_models_dict[model_name]['model'] = model_gscv
+        
+        if model_gscv.best_score_ > best_score:
+            best_score = model_gscv.best_score_
+            best_model_name = model_name
+
+        rank_ensemble_list.append((model_name, model_gscv.best_score_))
+
+        y_train_pred_prob = model_gscv.predict_proba(X_train)[:, 1]
+        y_train_pred_prob_list.append(y_train_pred_prob)
+
+        logging.info('Getting ROC-AUC for test set')
+        y_test_pred_prob = model_gscv.predict_proba(X_test)[:, 1]
+        y_test_pred_prob_list.append(y_test_pred_prob)
+        test_roc_auc = roc_auc_score(y_test, y_test_pred_prob)
+        logging.info(f'{model_name}:  Validation score = {model_gscv.best_score_:.4f}, Test score = {test_roc_auc:.4f}')
+
+    logging.info('Getting Average Ensemble scores')
+    avg_ens_y_train_pred_prob = get_mean_ensemble_prediction(y_train_pred_prob_list)
+    avg_ens_train_roc_auc = roc_auc_score(y_test, avg_ens_y_train_pred_prob)
+
+    if avg_ens_train_roc_auc > best_score:
+        best_score = avg_ens_train_roc_auc
+        best_model_name = 'Average Ensemble'
+
+    avg_ens_y_test_pred_prob = get_mean_ensemble_prediction(y_test_pred_prob_list)
+    avg_ens_test_roc_auc = roc_auc_score(y_test, avg_ens_y_test_pred_prob)
+    logging.info(f'Average Ensemble:  Validation score = {avg_ens_train_roc_auc:.4f}, Test score = {avg_ens_test_roc_auc:.4f}')
+
+    logging.info('Getting Rank Ensemble scores')
+    rank_ensemble_list = sorted(rank_ensemble_list, key=lambda x: x[1])
+
+    rank_ens_y_train_pred_prob = 0
+    rank_ens_y_test_pred_prob = 0
+    for i in range(len(rank_ensemble_list)):
+        rank_ens_y_train_pred_prob += (i+1) * y_train_pred_prob_list[model_names_list.index(rank_ensemble_list[i][0])]
+        rank_ens_y_test_pred_prob += (i+1) * y_test_pred_prob_list[model_names_list.index(rank_ensemble_list[i][0])]
+    rank_ens_y_train_pred_prob /= len(rank_ensemble_list) * (1+ len(rank_ensemble_list)) / 2
+    rank_ens_y_test_pred_prob /= len(rank_ensemble_list) * (1+ len(rank_ensemble_list)) / 2
+
+    if rank_ens_y_train_pred_prob > best_score:
+        best_score = rank_ens_y_train_pred_prob
+        best_model_name = 'Rank Ensemble'
+    logging.info(f'Rank Ensemble:  Validation score = {rank_ens_y_train_pred_prob:.4f}, Test score = {rank_ens_y_test_pred_prob:.4f}')
