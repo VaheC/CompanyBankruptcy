@@ -57,3 +57,13 @@ class ModelTrainer:
         except Exception as e:
             logging.info('Error occured during model training')
             raise CustomException(e, sys)
+
+# if __name__ == '__main__':
+#     model_training_obj = ModelTrainer()
+#     model_training_obj.initiate_model_training(
+#         train_df, 
+#         test_df, 
+#         features_dict_path, 
+#         cv_fold_list, 
+#         numerical_features
+#     )
