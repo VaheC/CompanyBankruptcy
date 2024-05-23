@@ -8,7 +8,23 @@ from company_bankruptcy.exception.exception import CustomException
 
 from sklearn.metrics import r2_score, mean_absolute_error,mean_squared_error
 
+from sklearn.svm import SVC
+from sklearn.feature_selection import RFE
+from sklearn.feature_selection import r_regression, SelectKBest
+from sklearn.feature_selection import mutual_info_regression, mutual_info_classif
+from sklearn.feature_selection import f_classif, chi2
+from sklearn.ensemble import RandomForestClassifier
+
+from xgboost import XGBClassifier
+
+from scipy import stats
 from scipy.special import softmax
+
+from statsmodels.stats.outliers_influence import variance_inflation_factor
+
+from boruta import BorutaPy
+
+from collections import Counter
 
 def save_object(file_path, obj):
     try:
@@ -87,3 +103,287 @@ def get_shap_features(shap_values, features, topk=10):
             selected_topk_feats.append(k)
 
     return selected_topk_feats
+
+class FSelector():
+    '''
+    Helps to select features based on BorutaPy, RFE, and various statistics
+    '''
+
+    def __init__(self, X, y, num_feats, ordinal_feats, nominal_feats, model, is_target_cat=True, select_n_feats=15):
+        '''
+        Initializes some parameters
+
+        Args:
+            X (pd.DataFrame): contains features' values
+            y (pd.DataFrame): contains target values
+            num_feats (list): list of numerical features' names
+            ordinal_feats (list): list of ordinal features' names
+            nominal_feats (list): list of nominal features' names
+            model (model object): can be any type of model like RandomForest, LogisticRegression, etc.
+            is_target_cat (bool): indicates whether the target is categorical or not
+            select_n_feats (int): specifies the number of features to output
+        '''
+
+        self.X = X
+        self.y = y
+        self.num_feats = num_feats
+        self.ordinal_feats = ordinal_feats
+        self.nominal_feats = nominal_feats
+        self.model = model
+        self.is_target_cat = is_target_cat
+        self.select_n_feats = select_n_feats
+
+    def calculate_vif(self, X):
+    
+        vif = pd.DataFrame()
+        vif["features"] = X.columns
+        vif["VIF"] = [variance_inflation_factor(X.values, i) for i in range(X.shape[1])]
+
+        return vif
+
+    def select_feats_via_vif(self):
+
+        num_features = self.num_feats.copy()
+
+        vif_df = self.calculate_vif(self.X[num_features])
+
+        while vif_df[vif_df['VIF']>=10].shape[0] != 0:
+            vif_df.sort_values('VIF', ascending=False, inplace=True)
+            vif_df.reset_index(drop=True, inplace=True)
+            # print(vif_df)
+            elimination_candidate = vif_df.iloc[0]['features']
+            # print(elimination_candidate)
+            num_features = [i for i in num_features if i!=elimination_candidate]
+            new_X = self.X[num_features]
+            vif_df = self.calculate_vif(new_X)
+
+        return list(vif_df['features'].values)
+    
+    def get_spearmanr(self, X, y):
+        # return np.array([stats.spearmanr(X.values[:, f], y.values).correlation for f in range(X.shape[1])])
+        spearman_values = [stats.spearmanr(X.values[:, f], y.values).correlation for f in range(X.shape[1])]
+        temp_sp_df = pd.DataFrame({'spearman': spearman_values, 'feats': list(X.columns)})
+        temp_sp_df['abs_spearman'] = np.abs(temp_sp_df['spearman'])
+        temp_sp_df.sort_values('abs_spearman', ascending=False, inplace=True)
+        temp_sp_df.reset_index(drop=True, inplace=True)
+        return temp_sp_df.iloc[:15]['feats'].to_list()
+    
+    def get_kendalltau(self, X, y):
+        # return [stats.kendalltau(X.values[:, f], y.values).correlation for f in range(X.shape[1])]
+        kendall_values = [stats.spearmanr(X.values[:, f], y.values).correlation for f in range(X.shape[1])]
+        temp_ken_df = pd.DataFrame({'kendall': kendall_values, 'feats': list(X.columns)})
+        temp_ken_df['abs_kendall'] = np.abs(temp_ken_df['kendall'])
+        temp_ken_df.sort_values('abs_kendall', ascending=False, inplace=True)
+        temp_ken_df.reset_index(drop=True, inplace=True)
+        return temp_ken_df.iloc[:15]['feats'].to_list()
+    
+    def get_pointbiserialr(self, X, y):
+        return [stats.pointbiserialr(X.values[:, f], y.values).correlation for f in range(X.shape[1])]
+    
+    def get_boruta_feats(self):
+        feat_selector = BorutaPy(self.model, n_estimators='auto', verbose=2, random_state=1)
+        feat_selector.fit(np.array(self.X), np.array(self.y))
+        boruta_selected_features = list(self.X.iloc[:, feat_selector.support_].columns)
+        return boruta_selected_features
+    
+    def get_kbest(self, X, feats_list, metric):
+        selector = SelectKBest(metric, k=self.select_n_feats)
+        selector.fit_transform(X[feats_list], self.y)
+        selected_feats_idxs_list = list(selector.get_support(indices=True))
+        column_names = [feats_list[i] for i in selected_feats_idxs_list]
+        return column_names
+    
+    def get_rfe_feats(self):
+        model_rfe = RFE(self.model, n_features_to_select=self.select_n_feats)
+        model_rfe.fit(self.X, self.y)
+        model_rfe_feats = list(self.X.iloc[:, list(model_rfe.support_)].columns)
+        return model_rfe_feats
+    
+    # def get_shap_feats(self, feats_list, topk=10):
+    #     model = self.model
+    #     X = self.X[feats_list]
+    #     model.fit(self.X, self.y)
+    #     explainer = shap.Explainer(model.predict, X, max_evals = int(2 * X.shape[1] + 1), verbose=0)
+    #     shap_values = explainer(X)
+    #     selected_shap_features = get_feature_importances_shap_values(
+    #         shap_values, features=list(X.columns), topk=topk
+    #     )
+    #     return selected_shap_features
+    
+    def get_features(self):
+
+        if self.num_feats is not None:
+
+            if self.is_target_cat:
+
+                temp_n_feats =  self.select_n_feats
+                if len(self.num_feats) < self.select_n_feats:
+                    self.select_n_feats = 'all'
+
+                # self.num_kendalltau_feats = self.get_kendalltau(self.X[self.num_feats], self.y)
+                self.num_f_feats = self.get_kbest(X=self.X, feats_list=self.num_feats, metric=f_classif)
+                self.num_mi_feats = self.get_kbest(X=self.X, feats_list=self.num_feats, metric=mutual_info_classif)
+
+                self.select_n_feats = temp_n_feats
+
+                self.selected_num_feats = []
+                # self.selected_num_feats.extend(self.num_kendalltau_feats)
+                self.selected_num_feats.extend(self.num_f_feats)
+                self.selected_num_feats.extend(self.num_mi_feats)
+
+            else:
+
+                self.vif_feats = self.select_feats_via_vif()
+
+                temp_n_feats =  self.select_n_feats
+                if len(self.num_feats) < self.select_n_feats:
+                    self.select_n_feats = 'all'
+
+                self.pearson_feats = self.get_kbest(X=self.X, feats_list=self.num_feats, metric=r_regression, k=self.select_n_feats)
+
+                self.select_n_feats = temp_n_feats
+                # self.num_spearmanr_feats = self.get_kbest(X=self.X, feats_list=self.num_feats, metric=stats.spearmanr, k=self.select_n_feats)
+                # self.num_kendalltau_feats = self.get_kbest(X=self.X, feats_list=self.num_feats, metric=stats.kendalltau, k=self.select_n_feats)
+                self.num_spearmanr_feats = self.get_spearmanr(self.X[self.num_feats], self.y)
+                self.num_kendalltau_feats = self.get_kendalltau(self.X[self.num_feats], self.y)
+                # self.num_spearmanr_feats = SelectKBest(self.get_spearmanr, k=self.select_n_feats).fit_transform(self.X[self.num_feats], self.y)
+                # self.num_kendalltau_feats = SelectKBest(self.get_kendalltau, k=self.select_n_feats).fit_transform(self.X[self.num_feats], self.y)
+
+                self.selected_num_feats = []
+                self.selected_num_feats.extend(self.pearson_feats)
+                self.selected_num_feats.extend(self.num_spearmanr_feats)
+                self.selected_num_feats.extend(self.num_kendalltau_feats)
+                # self.selected_num_feats = list(set(self.selected_num_feats))
+
+        else:
+
+            self.selected_num_feats = []
+
+        if self.ordinal_feats is not None:
+
+            if self.is_target_cat:
+
+                temp_n_feats =  self.select_n_feats
+                if len(self.ordinal_feats) < self.select_n_feats:
+                    self.select_n_feats = 'all'
+
+                self.ordinal_mi_feats = self.get_kbest(X=self.X, feats_list=self.ordinal_feats, metric=mutual_info_classif)
+                self.ordinal_chi2_feats = self.get_kbest(X=self.X, feats_list=self.ordinal_feats, metric=chi2)
+
+                self.selected_ordinal_feats = []
+                self.selected_ordinal_feats.extend(self.ordinal_mi_feats)
+                self.selected_ordinal_feats.extend(self.ordinal_chi2_feats)
+
+                self.select_n_feats = temp_n_feats
+
+            else:
+
+                self.ordinal_spearmanr_feats = self.get_spearmanr(self.X[self.ordinal_feats], self.y)
+                self.ordinal_kendalltau_feats = self.get_kendalltau(self.X[self.ordinal_feats], self.y)
+
+                # self.ordinal_spearmanr_feats = self.get_kbest(X=self.X, feats_list=self.ordinal_feats, metric=stats.spearmanr, k=self.select_n_feats)
+                # self.ordinal_kendalltau_feats = self.get_kbest(X=self.X, feats_list=self.ordinal_feats, metric=stats.kendalltau, k=self.select_n_feats)
+
+                # self.ordinal_spearmanr_feats = SelectKBest(self.get_spearmanr, k=self.select_n_feats).fit_transform(self.X[self.ordinal_feats], self.y)
+                # self.ordinal_kendalltau_feats = SelectKBest(self.get_kendalltau, k=self.select_n_feats).fit_transform(self.X[self.ordinal_feats], self.y)
+
+                self.selected_ordinal_feats = []
+                self.selected_ordinal_feats.extend(self.ordinal_spearmanr_feats)
+                self.selected_ordinal_feats.extend(self.ordinal_kendalltau_feats)
+                # self.selected_ordinal_feats = list(set(self.selected_ordinal_feats))
+                
+        else:
+            self.selected_ordinal_feats = []
+
+        if self.nominal_feats is not None:
+
+            if self.is_target_cat:
+                
+                temp_n_feats =  self.select_n_feats
+                if len(self.nominal_feats) < self.select_n_feats:
+                    self.select_n_feats = 'all'
+
+                self.nominal_mi_feats = self.get_kbest(X=self.X, feats_list=self.nominal_feats, metric=mutual_info_classif)
+                self.nominal_chi2_feats = self.get_kbest(X=self.X, feats_list=self.nominal_feats, metric=chi2)
+
+                self.selected_nominal_feats = []
+                self.selected_nominal_feats.extend(self.nominal_mi_feats)
+                self.selected_nominal_feats.extend(self.nominal_chi2_feats)
+                
+                self.select_n_feats = temp_n_feats
+
+            else:
+
+                temp_n_feats =  self.select_n_feats
+                if len(self.nominal_feats) < self.select_n_feats:
+                    self.select_n_feats = 'all'
+
+                self.f_feats = self.get_kbest(X=self.X, feats_list=self.nominal_feats, metric=f_classif, k=self.select_n_feats)
+                self.mi_feats = self.get_kbest(X=self.X, feats_list=self.nominal_feats, metric=mutual_info_regression, k=self.select_n_feats)
+
+                self.select_n_feats = temp_n_feats
+
+                # # self.f_feats = f_classif(self.X[self.nominal_feats], self.y)[0]
+                # self.f_feats = SelectKBest(f_classif, k=self.select_n_feats).fit_transform(self.X[self.nominal_feats], self.y).columns
+                
+                # # self.mi_feats = mutual_info_regression(self.X[self.nominal_feats], self.y)
+                # self.mi_feats = SelectKBest(mutual_info_regression, k=self.select_n_feats).fit_transform(self.X[self.nominal_feats], self.y).columns
+
+                self.selected_nominal_feats = []
+                self.selected_nominal_feats.extend(self.f_feats)
+                self.selected_nominal_feats.extend(self.mi_feats)
+                # self.selected_nominal_feats = list(set(self.selected_nominal_feats))
+
+        else:
+
+            self.selected_nominal_feats = []
+
+        if self.model is not None:
+            # np.int = np.int32
+            # np.float = np.float64
+            # np.bool = np.bool_
+            if isinstance(self.model, RandomForestClassifier) or isinstance(self.model, XGBClassifier):
+                self.boruta_feats =  self.get_boruta_feats()
+            if not isinstance(self.model, SVC):
+                self.rfe_feats = self.get_rfe_feats()
+        else:
+            self.boruta_feats = []
+            self.rfe_feats = []
+
+            
+        if len(self.selected_num_feats) != 0:
+            if isinstance(self.model, RandomForestClassifier) or isinstance(self.model, XGBClassifier):
+                self.selected_num_feats.extend(self.boruta_feats)
+            if not isinstance(self.model, SVC):
+                self.selected_num_feats.extend(self.rfe_feats)
+            num_feats_dict = dict(Counter(self.selected_num_feats))
+            self.selected_num_feats = [i for i in num_feats_dict if num_feats_dict[i] >= 2]
+
+
+        if len(self.selected_ordinal_feats) != 0:
+            if isinstance(self.model, RandomForestClassifier) or isinstance(self.model, XGBClassifier):
+                self.selected_ordinal_feats.extend(self.boruta_feats)
+            if not isinstance(self.model, SVC):
+                self.selected_ordinal_feats.extend(self.rfe_feats)
+            ordinal_feats_dict = dict(Counter(self.selected_ordinal_feats))
+            self.selected_ordinal_feats = [i for i in ordinal_feats_dict if ordinal_feats_dict[i] >= 2]
+
+        if len(self.selected_nominal_feats) != 0:
+            if isinstance(self.model, RandomForestClassifier) or isinstance(self.model, XGBClassifier):
+                self.selected_nominal_feats.extend(self.boruta_feats)
+            if not isinstance(self.model, SVC):
+                self.selected_nominal_feats.extend(self.rfe_feats)
+            nominal_feats_dict = dict(Counter(self.selected_nominal_feats))
+            self.selected_nominal_feats = [i for i in nominal_feats_dict if nominal_feats_dict[i] >= 2]
+
+        self.selected_feats = []
+        self.selected_feats.extend(self.selected_num_feats)
+        self.selected_feats.extend(self.selected_ordinal_feats)
+        self.selected_feats.extend(self.selected_nominal_feats)
+        if isinstance(self.model, RandomForestClassifier) or isinstance(self.model, XGBClassifier):
+            self.selected_feats.extend(self.boruta_feats)
+        self.selected_feats = list(set(self.selected_feats))
+
+        # self.selected_feats = self.get_shap_feats(self.selected_feats)
+
+        return self.selected_feats
