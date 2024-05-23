@@ -21,6 +21,9 @@ from xgboost import XGBClassifier
 
 from scipy import stats
 from scipy.special import softmax
+from scipy.optimize import fmin
+
+from functools import partial
 
 from statsmodels.stats.outliers_influence import variance_inflation_factor
 
@@ -567,3 +570,10 @@ def create_feature_selection_dict(data, cv_fold_list, numerical_features, nomina
         gc.collect()
 
     return selected_features_dict
+
+def get_mean_ensemble_prediction(prob_list):
+    prob_array = np.vstack(prob_list).T
+    return np.mean(prob_array, axis=1)
+
+
+    
