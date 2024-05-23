@@ -1,7 +1,10 @@
 import pandas as pd
 import numpy as np
-from company_bankruptcy.logger import logging
-from company_bankruptcy.exception import CustomException
+
+from company_bankruptcy.logger.logger import logging
+from company_bankruptcy.exception.exception import CustomException
+from company_bankruptcy.data_access.mongo_db_connection import MongoOps
+from company_bankruptcy.constants.constants import DATABASE_NAME, COLLECTION_NAME, MONGODB_COLLECTION_STR
 
 import os
 import sys
@@ -25,7 +28,10 @@ class DataIngestion:
         logging.info('Data ingestion started')
         try:
             logging.info('Reading the raw data')
-            data = #ingest from the database you need mongodb data loading function
+            mongo_instance = MongoOps(
+                client_url=MONGODB_COLLECTION_STR
+            )
+            data = mongo_instance.get_records(coll_name=COLLECTION_NAME, db_name=DATABASE_NAME)
             logging.info('Data loaded')
             os.makedirs(os.path.dirname(os.join.path(self.ingestion_config.raw_data_path)), exist_ok=True)
             logging.info('Saving the data')
@@ -49,5 +55,5 @@ class DataIngestion:
             raise CustomException(e, sys)
 
 if __name__ == '__main__':
-    obj = DataIngestion()
-    obj.initiate_data_ingestion()
+    data_ingestion_obj = DataIngestion()
+    data_ingestion_obj.initiate_data_ingestion()
