@@ -599,7 +599,19 @@ class OptimizeAUC:
         return preds
     
 def find_optimal_model(train_df, test_df, features_dict_path, cv_fold_list, numerical_features):
+    '''
+    Finds the best model for the train data and evaluates it on test data
 
+    Args:
+        train_df (pd.DataFrame): train data 
+        test_df (pd.DataFrame): test data 
+        features_dict_path (str): path to selected features dictionary
+        cv_fold_list (list): contains tuples of indeces of train and validation data for each fold
+        numerical_features (list): contains the names of numerical features
+
+    Returns:
+        dict: contains all trained models and the name of the best model
+    '''
     logging.info('Loading selected features dictionary')
     selected_features_dict = load_object(file_path=features_dict_path)
     logging.info('Selected features dictionary loaded')
@@ -678,8 +690,7 @@ def find_optimal_model(train_df, test_df, features_dict_path, cv_fold_list, nume
         model_gscv.fit(X_train, y_train)
         logging.info(f'{model_name} training finished')
 
-        trained_models_dict[model_name] = {}
-        trained_models_dict[model_name]['model'] = model_gscv
+        trained_models_dict[model_name] = model_gscv
         
         if model_gscv.best_score_ > best_score:
             best_score = model_gscv.best_score_
@@ -723,3 +734,7 @@ def find_optimal_model(train_df, test_df, features_dict_path, cv_fold_list, nume
         best_score = rank_ens_y_train_pred_prob
         best_model_name = 'Rank Ensemble'
     logging.info(f'Rank Ensemble:  Validation score = {rank_ens_y_train_pred_prob:.4f}, Test score = {rank_ens_y_test_pred_prob:.4f}')
+
+    trained_models_dict['best_model_name'] = best_model_name
+
+    return trained_models_dict
