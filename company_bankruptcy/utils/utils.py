@@ -501,10 +501,13 @@ def create_feature_selection_dict(data, cv_fold_list, numerical_features, nomina
                 X_train_filtered = X_train[selected_features]
                 X_valid_filtered = X_valid[selected_features]
 
+            # model training using selected features
+            model.fit(X_train_filtered, y_train)
+
             explainer = shap.Explainer(
                 model.predict,
                 X_train_filtered, 
-                max_evals = int(2 * X_train_filtered.shape[1] + 1), 
+                # max_evals = int(2 * X_train_filtered.shape[1] + 1), 
                 verbose=0
             )
             shap_values = explainer(X_train_filtered)
@@ -514,7 +517,8 @@ def create_feature_selection_dict(data, cv_fold_list, numerical_features, nomina
                 topk=10
             )
 
-            # model training
+            # model training using shap features
+            model = models_list[model_idx]
             model.fit(X_train_filtered[selected_shap_features], y_train)
 
             # metric calculation
@@ -559,7 +563,7 @@ def create_feature_selection_dict(data, cv_fold_list, numerical_features, nomina
             logging.info('Validation:')
             logging.info(f"Accuracy: {valid_acc:.5f}, F1: {valid_f1:.5f}, ROC-AUC: {valid_roc_auc:.5f}")
 
-        del X_train, y_train, X_valid, y_valid, X_train_filtered, X_valid_filtered
+        del X_train, y_train, X_valid, y_valid, X_train_filtered, X_valid_filtered, model
         gc.collect()
 
     return selected_features_dict
