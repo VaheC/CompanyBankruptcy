@@ -3,10 +3,9 @@ import sys
 import pickle
 import numpy as np
 import pandas as pd
+
 from company_bankruptcy.logger.logger import logging
 from company_bankruptcy.exception.exception import CustomException
-
-from sklearn.metrics import r2_score, mean_absolute_error,mean_squared_error
 
 from sklearn.svm import SVC
 from sklearn.feature_selection import RFE
@@ -14,6 +13,9 @@ from sklearn.feature_selection import r_regression, SelectKBest
 from sklearn.feature_selection import mutual_info_regression, mutual_info_classif
 from sklearn.feature_selection import f_classif, chi2
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import accuracy_score, f1_score, roc_auc_score
+from sklearn.preprocessing import StandardScaler
 
 from xgboost import XGBClassifier
 
@@ -24,7 +26,12 @@ from statsmodels.stats.outliers_influence import variance_inflation_factor
 
 from boruta import BorutaPy
 
+import shap
+
 from collections import Counter
+
+from tqdm.auto import tqdm
+import gc
 
 def save_object(file_path, obj):
     try:
@@ -387,3 +394,169 @@ class FSelector():
         # self.selected_feats = self.get_shap_feats(self.selected_feats)
 
         return self.selected_feats
+
+def create_feature_selection_dict(data, cv_fold_list, numerical_features, nominal_features):
+    '''
+    Returns feature selection dictionary for 4 different models
+
+    Args:
+        data (pd.DataFrame): train data 
+        cv_fold_list (list): contains tuples of indeces of train and validation data for each fold
+        numerical_features (list): contains the names of numerical features
+        nominal_features (list): contains the names of nominal features
+
+    Returns:
+        dict: contains selected features, train and validation scores, models and scalers used
+    '''
+
+    selected_features_dict = {}
+
+    for idx in tqdm(range(1)):
+
+        X_train = data.iloc[cv_fold_list[idx][0]].reset_index(drop=True)
+        y_train = data.iloc[cv_fold_list[idx][0]]['Bankrupt?'].to_frame().reset_index(drop=True)
+
+        X_valid = data.iloc[cv_fold_list[idx][1]].reset_index(drop=True)
+        y_valid = data.iloc[cv_fold_list[idx][1]]['Bankrupt?'].to_frame().reset_index(drop=True)
+
+        new_numerical_features = []
+        for feat in numerical_features:
+            X_train[f"feat{numerical_features.index(feat)}"] = X_train[feat] * X_train[' Liability-Assets Flag']
+            X_valid[f"feat{numerical_features.index(feat)}"] = X_valid[feat] * X_valid[' Liability-Assets Flag']
+            new_numerical_features.append(f"feat{numerical_features.index(feat)}")
+
+        numerical_features.extend(new_numerical_features)
+
+        # getting categorical features
+        categorical_features = nominal_features.copy()
+
+        #getting all features
+        all_features = []
+        all_features.extend(categorical_features)
+        all_features.extend(numerical_features)
+
+        X_train = X_train[all_features]
+        X_valid = X_valid[all_features]
+
+        models_list = [RandomForestClassifier(), XGBClassifier(), LogisticRegression(), SVC(probability=True)]
+        model_names_list = ['RandomForestClassifier', 'XGBClassifier', 'LogisticRegression', 'SVC']
+
+        for model_idx in tqdm(range(len(model_names_list))):
+
+            model_name = model_names_list[model_idx]
+
+            selected_features_dict[model_name] = {}
+
+            # feature selection
+            model = models_list[model_idx]
+
+            if isinstance(model, LogisticRegression) or isinstance(model, SVC):
+
+                scaler = StandardScaler()
+
+                X_train2 = scaler.fit_transform(X_train[numerical_features])
+                X_train2 = pd.DataFrame(X_train2, columns=numerical_features)
+                X_train2 = pd.concat([X_train2, X_train[categorical_features]], axis=1)
+
+                fselector = FSelector(
+                    X=X_train2, 
+                    y=y_train, 
+                    num_feats=numerical_features, 
+                    ordinal_feats=None, 
+                    nominal_feats=nominal_features, 
+                    model=model
+                )
+
+            else:
+
+                fselector = FSelector(
+                    X=X_train, 
+                    y=y_train, 
+                    num_feats=numerical_features, 
+                    ordinal_feats=None, 
+                    nominal_feats=nominal_features, 
+                    model=model
+                )
+
+            selected_features = fselector.get_features()
+
+            if len(selected_features) == 0:
+                continue
+            
+            # selecting features using shap values
+            if isinstance(model, LogisticRegression) or isinstance(model, SVC):
+
+                X_valid2 = scaler.transform(X_valid[numerical_features])
+                X_valid2 = pd.DataFrame(X_valid2, columns=numerical_features)
+                X_valid2 = pd.concat([X_valid2, X_valid[categorical_features]], axis=1)
+
+                X_train_filtered = X_train2[selected_features]
+                X_valid_filtered = X_valid2[selected_features]
+
+            else:
+
+                X_train_filtered = X_train[selected_features]
+                X_valid_filtered = X_valid[selected_features]
+
+            explainer = shap.Explainer(
+                model.predict,
+                X_train_filtered, 
+                max_evals = int(2 * X_train_filtered.shape[1] + 1), 
+                verbose=0
+            )
+            shap_values = explainer(X_train_filtered)
+            selected_shap_features = get_shap_features(
+                shap_values, 
+                features=list(X_train_filtered.columns), 
+                topk=10
+            )
+
+            # model training
+            model.fit(X_train_filtered[selected_shap_features], y_train)
+
+            # metric calculation
+            y_train_pred = model.predict(X_train_filtered[selected_shap_features])
+            y_train_pred_prob = model.predict_proba(X_train_filtered[selected_shap_features])[:, 1]
+
+            y_valid_pred = model.predict(X_valid_filtered[selected_shap_features])
+            y_valid_pred_prob = model.predict_proba(X_valid_filtered[selected_shap_features])[:, 1]
+
+            train_acc = accuracy_score(y_train, y_train_pred)
+            train_f1 = f1_score(y_train, y_train_pred)
+            train_roc_auc = roc_auc_score(y_train, y_train_pred_prob)
+
+            valid_acc = accuracy_score(y_valid, y_valid_pred)
+            valid_f1 = f1_score(y_valid, y_valid_pred)
+            valid_roc_auc = roc_auc_score(y_valid, y_valid_pred_prob)
+
+            selected_features_dict[model_name][idx+1] = {}
+            selected_features_dict[model_name][idx+1]['selected_feats'] = selected_features
+            selected_features_dict[model_name][idx+1]['selected_shap_feats'] = selected_shap_features
+            selected_features_dict[model_name][idx+1]['train_acc'] = train_acc
+            selected_features_dict[model_name][idx+1]['train_f1'] = train_f1
+            selected_features_dict[model_name][idx+1]['train_roc_auc'] = train_roc_auc
+            selected_features_dict[model_name][idx+1]['valid_acc'] = valid_acc
+            selected_features_dict[model_name][idx+1]['valid_f1'] = valid_f1
+            selected_features_dict[model_name][idx+1]['valid_roc_auc'] = valid_roc_auc
+            selected_features_dict[model_name][idx+1]['model'] = model
+            if isinstance(model, LogisticRegression) or isinstance(model, SVC):
+                selected_features_dict[model_name][idx+1]['scaler'] = scaler
+
+            # print(f"##### {model_name} #####")
+            # print(f"Selected features: {selected_features}")
+            # print("Train:")
+            # print(f"Accuracy: {train_acc:.5f}, F1: {train_f1:.5f}, ROC-AUC: {train_roc_auc:.5f}")
+            # print("Validation:")
+            # print(f"Accuracy: {valid_acc:.5f}, F1: {valid_f1:.5f}, ROC-AUC: {valid_roc_auc:.5f}")
+
+            logging.info("##### %(model_name)s #####")
+            logging.info(f"Selected features: {selected_features}")
+            logging.info('Train:')
+            logging.info(f"Accuracy: {train_acc:.5f}, F1: {train_f1:.5f}, ROC-AUC: {train_roc_auc:.5f}")
+            logging.info('Validation:')
+            logging.info(f"Accuracy: {valid_acc:.5f}, F1: {valid_f1:.5f}, ROC-AUC: {valid_roc_auc:.5f}")
+
+        del X_train, y_train, X_valid, y_valid, X_train_filtered, X_valid_filtered
+        gc.collect()
+
+    return selected_features_dict
