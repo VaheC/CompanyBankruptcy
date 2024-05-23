@@ -33,7 +33,7 @@ class DataIngestion:
             )
             data = mongo_instance.get_records(coll_name=COLLECTION_NAME, db_name=DATABASE_NAME)
             logging.info('Data loaded')
-            os.makedirs(os.path.dirname(os.join.path(self.ingestion_config.raw_data_path)), exist_ok=True)
+            os.makedirs(os.path.dirname(os.path.join(self.ingestion_config.raw_data_path)), exist_ok=True)
             logging.info('Saving the data')
             data.to_csv(self.ingestion_config.raw_data_path, index=False)
             logging.info('Data saved')
