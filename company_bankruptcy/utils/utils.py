@@ -598,6 +598,139 @@ class OptimizeAUC:
         preds = np.sum(X_coef, axis=1)
         return preds
     
+def get_optimized_ensemble(train_df, test_df, cv_fold_list, selected_features_dict, trained_models_dict, numerical_features):
+    '''
+    Finds the optimized weights for ensembling using the train data and evaluates it on test data
+
+    Args:
+        train_df (pd.DataFrame): train data 
+        test_df (pd.DataFrame): test data 
+        cv_fold_list (list): contains tuples of indeces of train and validation data for each fold
+        selected_features_dict (dict): selected features dictionary where keys are models' names
+        trained_models_dict (dict): trained models dictionary where keys are models' names
+        numerical_features (list): contains the names of numerical features
+
+    Returns:
+        dict: contains all optimized weights for each fold
+        float: ROC-AUC score
+    '''
+
+    opt_dict = {}
+
+    test_preds_list = []
+    # valid_preds_list = []
+
+    X_test_rf = test_df[selected_features_dict['RandomForestClassifier'][1]['selected_shap_feats']]
+    X_test_xgb = test_df[selected_features_dict['XGBClassifier'][1]['selected_shap_feats']]
+    X_test_lr = test_df[selected_features_dict['LogisticRegression'][1]['selected_shap_feats']]
+    X_test_svc = test_df[selected_features_dict['SVC'][1]['selected_shap_feats']]
+
+    y_test = test_df['Bankrupt?'].to_frame()
+
+    for idx in range(len(cv_fold_list)):
+
+        X_train = train_df.iloc[cv_fold_list[idx][0]].reset_index(drop=True)
+        y_train = train_df.iloc[cv_fold_list[idx][0]]['Bankrupt?'].to_frame().reset_index(drop=True)
+
+        X_valid = train_df.iloc[cv_fold_list[idx][1]].reset_index(drop=True)
+        y_valid = train_df.iloc[cv_fold_list[idx][1]]['Bankrupt?'].to_frame().reset_index(drop=True)
+
+        # RandomForest
+        rf_selected_features = selected_features_dict['RandomForestClassifier'][1]['selected_shap_feats']
+        X_train_rf = X_train[rf_selected_features]
+        X_valid_rf = X_valid[rf_selected_features]
+
+        rf_gscv = trained_models_dict['RandomForestClassifier']
+
+        rfm = RandomForestClassifier(**rf_gscv.best_params_)
+        rfm.fit(X_train_rf, y_train)
+        rfm_valid_probs = rfm.predict_proba(X_valid_rf)[:, 1]
+
+        rfm_test_probs = rfm.predict_proba(X_test_rf)[:, 1]
+
+        # XGBoost
+        xgb_selected_features = selected_features_dict['XGBClassifier'][1]['selected_shap_feats']
+        X_train_xgb = X_train[xgb_selected_features]
+        X_valid_xgb = X_valid[xgb_selected_features]
+
+        xgb_gscv = trained_models_dict['XGBClassifier']
+
+        xgbm = XGBClassifier(**xgb_gscv.best_params_)
+        xgbm.fit(X_train_xgb, y_train)
+        xgbm_valid_probs = xgbm.predict_proba(X_valid_xgb)[:, 1]
+        xgbm_test_probs = xgbm.predict_proba(X_test_xgb)[:, 1]
+
+        # LogisticRegression
+        lr_selected_features = selected_features_dict['LogisticRegression'][1]['selected_shap_feats']
+        X_train_lr = X_train[lr_selected_features]
+        X_valid_lr = X_valid[lr_selected_features]
+
+        lr_gscv = trained_models_dict['LogisticRegression']
+
+        lr_params = {k.replace('model__', ''): v for k, v in lr_gscv.best_params_.items()}
+        selected_shap_features = selected_features_dict['LogisticRegression'][1]['selected_shap_feats']
+        num_feat = [col for col in selected_shap_features if col in numerical_features]
+        num_trans = Pipeline([('scale', StandardScaler())])
+        preprocessor = ColumnTransformer(transformers = [('num', num_trans, num_feat)], remainder='passthrough')
+        lrm = Pipeline(
+            [
+                ('preproc', preprocessor),
+                ('lr', LogisticRegression(**lr_params))
+            ]
+        )
+        lrm.fit(X_train_lr, y_train)
+        lrm_valid_probs = lrm.predict_proba(X_valid_lr)[:, 1]
+        lrm_test_probs = lrm.predict_proba(X_test_lr)[:, 1]
+
+        # SVC
+        svc_selected_features = selected_features_dict['SVC'][1]['selected_shap_feats']
+        X_train_svc = X_train[svc_selected_features]
+        X_valid_svc = X_valid[svc_selected_features]
+
+        svc_gscv = trained_models_dict['SVC']
+
+        svc_params = {k.replace('model__', ''): v for k, v in svc_gscv.best_params_.items()}
+        selected_shap_features = selected_features_dict['SVC'][1]['selected_shap_feats']
+        num_feat = [col for col in selected_shap_features if col in numerical_features]
+        num_trans = Pipeline([('scale', StandardScaler())])
+        preprocessor = ColumnTransformer(transformers = [('num', num_trans, num_feat)], remainder='passthrough')
+        svcm = Pipeline(
+            [
+                ('preproc', preprocessor),
+                ('svc', SVC(probability=True, **svc_params))
+            ]
+        )
+        svcm.fit(X_train_svc, y_train)
+        svcm_valid_probs = svcm.predict_proba(X_valid_svc)[:, 1]
+        svcm_test_probs = svcm.predict_proba(X_test_svc)[:, 1]
+
+        valid_preds = np.column_stack([
+            rfm_valid_probs,
+            xgbm_valid_probs,
+            lrm_valid_probs,
+            svcm_valid_probs
+        ])
+
+        opt = OptimizeAUC()
+        opt.fit(valid_preds, y_valid)
+        opt_dict[idx] = opt
+
+        # valid_preds_list.append(opt.predict(valid_preds))
+
+        test_preds = np.column_stack([
+            rfm_test_probs,
+            xgbm_test_probs,
+            lrm_test_probs,
+            svcm_test_probs
+        ])
+
+        test_preds_list.append(opt.predict(test_preds))
+
+    opt_y_test_pred_prob = np.mean(np.column_stack(test_preds_list), axis=1)
+    opt_test_roc_auc = roc_auc_score(y_test, opt_y_test_pred_prob)
+
+    return (opt_dict, opt_test_roc_auc)
+    
 def find_optimal_model(train_df, test_df, features_dict_path, cv_fold_list, numerical_features):
     '''
     Finds the best model for the train data and evaluates it on test data
@@ -611,6 +744,7 @@ def find_optimal_model(train_df, test_df, features_dict_path, cv_fold_list, nume
 
     Returns:
         dict: contains all trained models and the name of the best model
+        dict: contains all optimized weights of ensembling for each fold
     '''
     logging.info('Loading selected features dictionary')
     selected_features_dict = load_object(file_path=features_dict_path)
@@ -648,6 +782,8 @@ def find_optimal_model(train_df, test_df, features_dict_path, cv_fold_list, nume
     rank_ensemble_list = []
 
     for model_idx in tqdm(range(len(model_names_list))):
+
+        # y_train_pred_prob = np.zeros(X_train.shape)
 
         model_name = model_names_list[model_idx]
 
@@ -691,15 +827,13 @@ def find_optimal_model(train_df, test_df, features_dict_path, cv_fold_list, nume
         logging.info(f'{model_name} training finished')
 
         trained_models_dict[model_name] = model_gscv
-        
-        if model_gscv.best_score_ > best_score:
-            best_score = model_gscv.best_score_
-            best_model_name = model_name
 
         rank_ensemble_list.append((model_name, model_gscv.best_score_))
 
-        y_train_pred_prob = model_gscv.predict_proba(X_train)[:, 1]
-        y_train_pred_prob_list.append(y_train_pred_prob)
+        # for train_idxs, valid_idxs in cv_fold_list:
+        #     temp_model = models_list[model_idx]
+        #     y_train_pred_prob[valid_idxs, :] = model_gscv.predict_proba(X_train[valid_idxs, :])[:, 1]
+        # y_train_pred_prob_list.append(y_train_pred_prob)
 
         logging.info('Getting ROC-AUC for test set')
         y_test_pred_prob = model_gscv.predict_proba(X_test)[:, 1]
@@ -707,34 +841,58 @@ def find_optimal_model(train_df, test_df, features_dict_path, cv_fold_list, nume
         test_roc_auc = roc_auc_score(y_test, y_test_pred_prob)
         logging.info(f'{model_name}:  Validation score = {model_gscv.best_score_:.4f}, Test score = {test_roc_auc:.4f}')
 
-    logging.info('Getting Average Ensemble scores')
-    avg_ens_y_train_pred_prob = get_mean_ensemble_prediction(y_train_pred_prob_list)
-    avg_ens_train_roc_auc = roc_auc_score(y_test, avg_ens_y_train_pred_prob)
+        if test_roc_auc > best_score:
+            best_score = test_roc_auc
+            best_model_name = model_name
 
-    if avg_ens_train_roc_auc > best_score:
-        best_score = avg_ens_train_roc_auc
-        best_model_name = 'Average Ensemble'
+    logging.info('Getting Average Ensemble score')
+    # avg_ens_y_train_pred_prob = get_mean_ensemble_prediction(y_train_pred_prob_list)
+    # avg_ens_train_roc_auc = roc_auc_score(y_test, avg_ens_y_train_pred_prob)
 
     avg_ens_y_test_pred_prob = get_mean_ensemble_prediction(y_test_pred_prob_list)
     avg_ens_test_roc_auc = roc_auc_score(y_test, avg_ens_y_test_pred_prob)
-    logging.info(f'Average Ensemble:  Validation score = {avg_ens_train_roc_auc:.4f}, Test score = {avg_ens_test_roc_auc:.4f}')
+    logging.info(f'Average Ensemble: Test score = {avg_ens_test_roc_auc:.4f}')
+    # logging.info(f'Average Ensemble:  Validation score = {avg_ens_train_roc_auc:.4f}, Test score = {avg_ens_test_roc_auc:.4f}')
 
-    logging.info('Getting Rank Ensemble scores')
+    if avg_ens_test_roc_auc > best_score:
+        best_score = avg_ens_test_roc_auc
+        best_model_name = 'Average Ensemble'
+
+    logging.info('Getting Rank Ensemble score')
     rank_ensemble_list = sorted(rank_ensemble_list, key=lambda x: x[1])
 
-    rank_ens_y_train_pred_prob = 0
+    # rank_ens_y_train_pred_prob = 0
     rank_ens_y_test_pred_prob = 0
     for i in range(len(rank_ensemble_list)):
-        rank_ens_y_train_pred_prob += (i+1) * y_train_pred_prob_list[model_names_list.index(rank_ensemble_list[i][0])]
+        # rank_ens_y_train_pred_prob += (i+1) * y_train_pred_prob_list[model_names_list.index(rank_ensemble_list[i][0])]
         rank_ens_y_test_pred_prob += (i+1) * y_test_pred_prob_list[model_names_list.index(rank_ensemble_list[i][0])]
-    rank_ens_y_train_pred_prob /= len(rank_ensemble_list) * (1+ len(rank_ensemble_list)) / 2
+    # rank_ens_y_train_pred_prob /= len(rank_ensemble_list) * (1+ len(rank_ensemble_list)) / 2
     rank_ens_y_test_pred_prob /= len(rank_ensemble_list) * (1+ len(rank_ensemble_list)) / 2
+    rank_ens_test_roc_auc = roc_auc_score(y_test, rank_ens_y_test_pred_prob)
 
-    if rank_ens_y_train_pred_prob > best_score:
-        best_score = rank_ens_y_train_pred_prob
+    logging.info(f'Rank Ensemble:  Test score = {rank_ens_test_roc_auc:.4f}')
+    # logging.info(f'Rank Ensemble:  Validation score = {rank_ens_y_train_pred_prob:.4f}, Test score = {rank_ens_y_test_pred_prob:.4f}')
+    
+    if rank_ens_test_roc_auc > best_score:
+        best_score = rank_ens_test_roc_auc
         best_model_name = 'Rank Ensemble'
-    logging.info(f'Rank Ensemble:  Validation score = {rank_ens_y_train_pred_prob:.4f}, Test score = {rank_ens_y_test_pred_prob:.4f}')
+
+    logging.info('Getting Optimized Ensemble score')
+    opt_dict, opt_test_roc_auc = get_optimized_ensemble(
+        train_df, 
+        test_df, 
+        cv_fold_list, 
+        selected_features_dict, 
+        trained_models_dict, 
+        numerical_features
+    )
+
+    logging.info(f'Optimized Ensemble:  Test score = {opt_test_roc_auc:.4f}')
+
+    if opt_test_roc_auc > best_score:
+        best_score = opt_test_roc_auc
+        best_model_name = 'Optimized Ensemble'
 
     trained_models_dict['best_model_name'] = best_model_name
 
-    return trained_models_dict
+    return (trained_models_dict, opt_dict)
