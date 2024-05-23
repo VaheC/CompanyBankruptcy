@@ -33,6 +33,9 @@ from collections import Counter
 from tqdm.auto import tqdm
 import gc
 
+import warnings
+warnings.filterwarnings('ignore')
+
 def save_object(file_path, obj):
     try:
         dir_path = os.path.dirname(file_path)
