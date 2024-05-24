@@ -55,31 +55,6 @@ def save_object(file_path, obj):
     except Exception as e:
         raise CustomException(e, sys)
 
-
-def evaluate_model(X_train, y_train, X_test, y_test, models):
-    try:
-        report = {}
-        for i in range(len(models)):
-            model = list(models.values())[i]
-            # Train model
-            model.fit(X_train, y_train)
-
-            # Predict Testing data
-            y_test_pred = model.predict(X_test)
-
-            # Get R2 scores for train and test data
-            # train_model_score = r2_score(ytrain,y_train_pred)
-            test_model_score = r2_score(y_test, y_test_pred)
-
-            report[list(models.keys())[i]] = test_model_score
-
-        return report
-
-    except Exception as e:
-        logging.info('Exception occured during model training')
-        raise CustomException(e, sys)
-
-
 def load_object(file_path):
     try:
         with open(file_path, 'rb') as file_obj:
@@ -858,10 +833,8 @@ def find_optimal_model(train_df, test_df, features_dict_path, cv_fold_list, nume
     best_score = 0
     best_model_name = None
 
-    X_train = train_df[selected_shap_features]
+    
     y_train = train_df['Bankrupt?'].to_frame()
-
-    X_test = test_df[selected_shap_features]
     y_test = test_df['Bankrupt?'].to_frame()
 
     y_train_pred_prob_list = []
@@ -875,6 +848,9 @@ def find_optimal_model(train_df, test_df, features_dict_path, cv_fold_list, nume
         model_name = model_names_list[model_idx]
 
         selected_shap_features = selected_features_dict[model_name][1]['selected_shap_feats']
+
+        X_train = train_df[selected_shap_features]
+        X_test = test_df[selected_shap_features]
 
         logging.info(f'Starting {model_name} training')
         params_dict = model_params_list[model_idx]
