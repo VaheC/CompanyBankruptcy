@@ -2,13 +2,12 @@ import pandas as pd
 import numpy as np
 from company_bankruptcy.logger.logger import logging
 from company_bankruptcy.exception.exception import CustomException
+from company_bankruptcy.utils.utils import save_object, find_optimal_model
 
 import os
 import sys
 from pathlib import Path
 from dataclasses import dataclass
-
-from company_bankruptcy.utils.utils import save_object, evaluate_model, load_object, find_optimal_model
 
 
 @dataclass
