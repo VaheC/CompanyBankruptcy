@@ -765,7 +765,12 @@ def get_optimized_ensemble(train_df, test_df, cv_fold_list, selected_features_di
 
         opt = OptimizeAUC()
         opt.fit(valid_preds, y_valid)
-        opt_dict[idx] = opt
+        opt_dict[idx] = {}
+        opt_dict[idx]['opt'] = opt
+        opt_dict[idx]['rfm'] = rfm
+        opt_dict[idx]['xgbm'] = xgbm
+        opt_dict[idx]['lrm'] = lrm
+        opt_dict[idx]['svcm'] = svcm
         logging.info('Optimization finished')
 
         # valid_preds_list.append(opt.predict(valid_preds))
