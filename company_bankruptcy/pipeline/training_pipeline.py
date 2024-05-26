@@ -1,6 +1,7 @@
 from company_bankruptcy.components.data_ingestion import DataIngestion
 from company_bankruptcy.components.data_transformation import DataTransformation
 from company_bankruptcy.components.model_trainer import ModelTrainer
+from company_bankruptcy.components.model_evaluation import ModelEvaluation
 
 data_ingestion_obj = DataIngestion()
 train_path, test_path = data_ingestion_obj.initiate_data_ingestion()
@@ -20,3 +21,5 @@ model_training_obj.initiate_model_training(
     numerical_features=numerical_features
 )
 
+model_evaluation_obj = ModelEvaluation()
+model_evaluation_obj.initiate_model_evaluation(test_df)
