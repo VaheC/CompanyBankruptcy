@@ -9,7 +9,6 @@ from company_bankruptcy.components.data_transformation import DataTransformation
 
 import os
 import sys
-from pathlib import Path
 
 import mlflow
 import mlflow.sklearn
