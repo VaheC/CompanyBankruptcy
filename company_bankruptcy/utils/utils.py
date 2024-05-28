@@ -530,7 +530,7 @@ def create_feature_selection_dict(data, cv_fold_list, numerical_features, nomina
                 model.predict,
                 X_train_filtered,
                 # max_evals = int(2 * X_train_filtered.shape[1] + 1),
-                verbose=0
+                # verbose=0
             )
             shap_values = explainer(X_train_filtered)
             selected_shap_features = get_shap_features(
@@ -586,7 +586,7 @@ def create_feature_selection_dict(data, cv_fold_list, numerical_features, nomina
             # print("Validation:")
             # print(f"Accuracy: {valid_acc:.5f}, F1: {valid_f1:.5f}, ROC-AUC: {valid_roc_auc:.5f}")
 
-            logging.info("##### %(model_name)s #####")
+            logging.info(f"##### {model_name} #####")
             logging.info(f"Selected features: {selected_features}")
             logging.info('Train:')
             logging.info(
