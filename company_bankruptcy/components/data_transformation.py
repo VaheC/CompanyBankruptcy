@@ -47,12 +47,12 @@ class DataTransformation:
                 skfold_list.append((train_idxs, valid_idxs))
             logging.info('CV folds created')
             
-            logging.info('Creating new columns using categorical and numerical iteractions')
-            for feat in numerical_features:
-                train_df[f"feat{numerical_features.index(feat)}"] = train_df[feat] * train_df[' Liability-Assets Flag']
-                test_df[f"feat{numerical_features.index(feat)}"] = test_df[feat] * test_df[' Liability-Assets Flag']
-                numerical_features.append(f"feat{numerical_features.index(feat)}")
-            logging.info('New columns created')
+            # logging.info('Creating new columns using categorical and numerical iteractions')
+            # for feat in numerical_features:
+            #     train_df[f"feat{numerical_features.index(feat)}"] = train_df[feat] * train_df[' Liability-Assets Flag']
+            #     test_df[f"feat{numerical_features.index(feat)}"] = test_df[feat] * test_df[' Liability-Assets Flag']
+            #     numerical_features.append(f"feat{numerical_features.index(feat)}")
+            # logging.info('New columns created')
 
             logging.info('Starting feature selection')
             selected_features_dict = create_feature_selection_dict(
