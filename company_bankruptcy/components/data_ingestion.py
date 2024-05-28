@@ -13,6 +13,8 @@ from dataclasses import dataclass
 
 from sklearn.model_selection import train_test_split
 
+MONGODB_COLLECTION_STR = "mongodb+srv://vcharchian:12DyeUWoTDa10AJn@cluster0.xbq0vxb.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
+
 @dataclass
 class DataIngestionConfig:
     raw_data_path:str = os.path.join('artifacts', 'data.csv')
