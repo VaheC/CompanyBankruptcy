@@ -4,7 +4,6 @@ import numpy as np
 
 import os
 import sys
-from io import StringIO
 
 from company_bankruptcy.components.model_trainer import ModelTrainer
 from company_bankruptcy.components.data_transformation import DataTransformation
