@@ -19,7 +19,8 @@ st.set_page_config(
 try:
 
     st.title('Company Default Predictor')
-
+    
+    logging.info('Initiating dictionaries')
     if 'trained_models_dict' not in st.session_state:
         model_trainer_obj = ModelTrainer()
         trained_models_dict = load_object(
@@ -49,14 +50,19 @@ try:
         trained_models_dict = st.session_state['trained_models_dict']
         opt_dict = st.session_state['opt_dict']
         feature_selection_dict = st.session_state['feature_selection_dict']
-
+    logging.info('Dictionaries initiated')    
+    
+    logging.info('Checking button clicked')
     if 'clicked' not in st.session_state:
         st.session_state.clicked = False
+    logging.info(f'Button check passed with value {st.session_state.clicked}')
+    
 
     st.subheader('Please, fill in the input boxes and click on submit to get the default probability.')
 
     best_model_name = trained_models_dict['best_model_name']
-
+    
+    logging.info("Getting features' list")
     if best_model_name in ['Average Ensemble', 'Optimized Ensemble', 'Rank Ensemble']:
         features_list = []
         for model_name in feature_selection_dict:
@@ -66,12 +72,14 @@ try:
         features_list = list(set(features_list))
     else:
         features_list = feature_selection_dict[best_model_name][1]['selected_shap_feats']
+    logging.info("Features' list found")
 
     n_cols = 2
     n_rows = int((len(features_list) - len(features_list) % n_cols) / n_cols)
     if len(features_list) % n_cols != 0:
         n_rows += 1
 
+    logging.info('Constructing the app input structure')
     input_dict = {}
     feature_idx = 0
     for i in range(n_rows):
@@ -80,19 +88,30 @@ try:
 
         with temp_input_container:
             col1, col2 = st.columns(n_cols)
-            if i != n_rows - 1:
-                input_dict[features_list[feature_idx]] = col1.number_input(
-                    features_list[feature_idx]
-                )
-                input_dict[features_list[feature_idx+1]] = col2.number_input(
-                    features_list[feature_idx+1]
-                )
+            if i <= n_rows - 1 and len(features_list) % 2 == 0:
+                input_dict[features_list[feature_idx]] = [
+                    col1.number_input(
+                        features_list[feature_idx],
+                        format='%.6f'
+                    )
+                ]
+                input_dict[features_list[feature_idx+1]] = [
+                    col2.number_input(
+                        features_list[feature_idx+1],
+                        format='%.6f'
+                    )
+                ]
             else:
-                input_dict[features_list[feature_idx]] = col1.number_input(
-                    features_list[feature_idx]
-                )
+                input_dict[features_list[feature_idx]] = [
+                    col1.number_input(
+                        features_list[feature_idx],
+                        format='%.6f'
+                    )
+                ]
 
         feature_idx += 2
+
+    logging.info('Input structure constructed')
 
     def set_button_click():
         st.session_state.clicked = True
@@ -101,10 +120,14 @@ try:
 
     if st.session_state.clicked:
 
+        logging.info(f'Calculating prob for {best_model_name}')
+
         input_df = pd.DataFrame(input_dict)
 
-        if best_model_name == 'Average Ensemble':
+        logging.info(f'input_df: {input_df}')
 
+        if best_model_name == 'Average Ensemble':
+            
             default_prob = 0
             for model_name in trained_models_dict:
                 if model_name == 'best_model_name':
@@ -172,9 +195,11 @@ try:
             temp_features_list = feature_selection_dict[best_model_name][1]['selected_shap_feats']
             default_prob = model.predict_proba(input_df[temp_features_list])[:, 1]
 
-        st.write(f"Default probability: {default_prob:.4f}")
+        st.write(f"Default probability: {default_prob[0]:.4f}")
+
+        logging.info(f'Default prob: {default_prob[0]:.4f}')
 
 except Exception as e:
     logging.info('Error occured while creating streamlit app')
-    CustomException(e, sys)
+    raise CustomException(e, sys)
 
